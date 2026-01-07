@@ -1,0 +1,496 @@
+# Database Schema for ManyChat Clone SaaS Platform
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// Users/Customers
+model User {
+  id            String    @id @default(cuid())
+  email         String    @unique
+  password      String
+  firstName     String
+  lastName      String
+  phone         String?
+  avatar        String?
+  companyName   String?
+  role          UserRole  @default(USER)
+  status        UserStatus @default(ACTIVE)
+  emailVerified Boolean   @default(false)
+  lastLoginAt   DateTime?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  // Relations
+  tenants       Tenant[]
+  sessions      UserSession[]
+  subscriptions Subscription[]
+  activityLogs  ActivityLog[]
+
+  @@map("users")
+}
+
+// User Sessions for Authentication
+model UserSession {
+  id        String   @id @default(cuid())
+  userId    String
+  token     String   @unique
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("user_sessions")
+}
+
+// Tenants (Multi-tenant Architecture)
+model Tenant {
+  id          String      @id @default(cuid())
+  name        String
+  domain      String?     @unique
+  subdomain   String?     @unique
+  logo        String?
+  primaryColor String?    @default("#25D366")
+  settings    Json?       // Custom tenant settings
+  status      TenantStatus @default(ACTIVE)
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
+
+  // Relations
+  ownerId     String
+  owner       User        @relation(fields: [ownerId], references: [id])
+  users       TenantUser[]
+  whatsappAccounts WhatsAppAccount[]
+  workflows   Workflow[]
+  contacts    Contact[]
+  campaigns   Campaign[]
+  templates   MessageTemplate[]
+  analytics   Analytics[]
+
+  @@map("tenants")
+}
+
+// Tenant-User Relationships
+model TenantUser {
+  id        String            @id @default(cuid())
+  tenantId  String
+  userId    String
+  role      TenantUserRole    @default(MEMBER)
+  status    TenantUserStatus  @default(ACTIVE)
+  joinedAt  DateTime          @default(now())
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([tenantId, userId])
+  @@map("tenant_users")
+}
+
+// WhatsApp Business Accounts per Tenant
+model WhatsAppAccount {
+  id                String              @id @default(cuid())
+  tenantId          String
+  phoneNumber       String              @unique
+  phoneNumberId     String              @unique
+  displayName       String
+  businessId        String
+  wabaId            String
+  accessToken       String              // Encrypted
+  verifyToken       String              @unique
+  webhookSecret     String              @unique
+  status            WhatsAppStatus      @default(PENDING)
+  metadata          Json?
+  lastSyncAt        DateTime?
+  createdAt         DateTime            @default(now())
+  updatedAt         DateTime            @updatedAt
+
+  // Relations
+  tenant            Tenant              @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  messages          Message[]
+  conversations     Conversation[]
+  templates         MessageTemplate[]
+
+  @@map("whatsapp_accounts")
+}
+
+// Contacts (CRM)
+model Contact {
+  id          String        @id @default(cuid())
+  tenantId    String
+  whatsappId  String        @unique
+  name        String?
+  email       String?
+  phone       String        @unique
+  tags        String[]      // Array of tags
+  customFields Json?        // Custom contact fields
+  status      ContactStatus @default(ACTIVE)
+  lastSeenAt  DateTime?
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+
+  // Relations
+  tenant      Tenant        @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  messages    Message[]
+  conversations Conversation[]
+
+  @@map("contacts")
+}
+
+// Conversations
+model Conversation {
+  id            String              @id @default(cuid())
+  tenantId      String
+  contactId     String
+  whatsappAccountId String
+  status        ConversationStatus  @default(ACTIVE)
+  lastMessageAt DateTime?
+  metadata      Json?
+  createdAt     DateTime            @default(now())
+  updatedAt     DateTime            @updatedAt
+
+  // Relations
+  tenant        Tenant              @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  contact       Contact             @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  whatsappAccount WhatsAppAccount   @relation(fields: [whatsappAccountId], references: [id], onDelete: Cascade)
+  messages      Message[]
+
+  @@map("conversations")
+}
+
+// Messages
+model Message {
+  id                String        @id @default(cuid())
+  tenantId          String
+  conversationId    String
+  contactId         String
+  whatsappAccountId String
+  messageId         String        @unique // WhatsApp message ID
+  direction         MessageDirection
+  type              MessageType   @default(TEXT)
+  content           Json          // Message content (text, media, etc.)
+  status            MessageStatus @default(PENDING)
+  metadata          Json?
+  sentAt            DateTime
+  deliveredAt       DateTime?
+  readAt            DateTime?
+  createdAt         DateTime      @default(now())
+  updatedAt         DateTime      @updatedAt
+
+  // Relations
+  tenant            Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  conversation      Conversation    @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  contact           Contact         @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  whatsappAccount   WhatsAppAccount @relation(fields: [whatsappAccountId], references: [id], onDelete: Cascade)
+
+  @@map("messages")
+}
+
+// Workflows (Visual Automation Builder)
+model Workflow {
+  id          String        @id @default(cuid())
+  tenantId    String
+  name        String
+  description String?
+  trigger      WorkflowTrigger
+  nodes        Json          // Workflow nodes configuration
+  edges        Json          // Workflow edges/connections
+  status       WorkflowStatus @default(DRAFT)
+  version      Int           @default(1)
+  isActive     Boolean       @default(false)
+  metadata     Json?
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+
+  // Relations
+  tenant      Tenant        @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  executions  WorkflowExecution[]
+  analytics   Analytics[]
+
+  @@map("workflows")
+}
+
+// Workflow Executions
+model WorkflowExecution {
+  id          String            @id @default(cuid())
+  workflowId  String
+  contactId   String
+  status      ExecutionStatus    @default(RUNNING)
+  input       Json              // Input data
+  output      Json?             // Output data
+  error       String?
+  startedAt   DateTime          @default(now())
+  completedAt DateTime?
+  metadata    Json?
+
+  workflow    Workflow          @relation(fields: [workflowId], references: [id], onDelete: Cascade)
+
+  @@map("workflow_executions")
+}
+
+// Message Templates
+model MessageTemplate {
+  id                String              @id @default(cuid())
+  tenantId          String
+  whatsappAccountId String
+  name              String
+  category          TemplateCategory
+  language          String              @default("en")
+  components        Json                // Template components
+  status            TemplateStatus      @default(PENDING)
+  rejectionReason   String?
+  metadata          Json?
+  createdAt         DateTime            @default(now())
+  updatedAt         DateTime            @updatedAt
+
+  // Relations
+  tenant            Tenant              @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  whatsappAccount   WhatsAppAccount     @relation(fields: [whatsappAccountId], references: [id], onDelete: Cascade)
+
+  @@map("message_templates")
+}
+
+// Campaigns
+model Campaign {
+  id          String        @id @default(cuid())
+  tenantId    String
+  name        String
+  description String?
+  type        CampaignType
+  status      CampaignStatus @default(DRAFT)
+  audience    Json          // Target audience criteria
+  content     Json          // Campaign content
+  schedule    Json?         // Scheduling settings
+  metadata    Json?
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+
+  // Relations
+  tenant      Tenant        @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  analytics   Analytics[]
+
+  @@map("campaigns")
+}
+
+// Subscriptions & Billing
+model Subscription {
+  id          String            @id @default(cuid())
+  userId      String
+  planId      String
+  status      SubscriptionStatus @default(ACTIVE)
+  currentPeriodStart DateTime
+  currentPeriodEnd   DateTime
+  cancelAtPeriodEnd  Boolean   @default(false)
+  stripeSubscriptionId String? @unique
+  metadata    Json?
+  createdAt   DateTime          @default(now())
+  updatedAt   DateTime          @updatedAt
+
+  user        User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("subscriptions")
+}
+
+// Plans
+model Plan {
+  id          String   @id @default(cuid())
+  name        String   @unique
+  description String?
+  price       Decimal  @db.Decimal(10, 2)
+  currency    String   @default("USD")
+  interval    String   @default("month") // month, year
+  features    Json     // Plan features
+  limits      Json     // Usage limits
+  status      PlanStatus @default(ACTIVE)
+  sortOrder   Int      @default(0)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@map("plans")
+}
+
+// Analytics
+model Analytics {
+  id          String       @id @default(cuid())
+  tenantId    String
+  type        AnalyticsType
+  date        DateTime
+  metrics     Json         // Analytics metrics
+  metadata    Json?
+  createdAt   DateTime     @default(now())
+
+  // Relations
+  tenant      Tenant       @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  workflow    Workflow?    @relation(fields: [workflowId], references: [id], onDelete: Cascade)
+  campaign    Campaign?    @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+
+  @@map("analytics")
+}
+
+// Activity Logs
+model ActivityLog {
+  id          String       @id @default(cuid())
+  userId      String
+  action      String
+  resource    String?
+  resourceId  String?
+  details     Json?
+  ipAddress   String?
+  userAgent   String?
+  createdAt   DateTime     @default(now())
+
+  user        User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("activity_logs")
+}
+
+// Enums
+enum UserRole {
+  USER
+  ADMIN
+  SUPER_ADMIN
+}
+
+enum UserStatus {
+  ACTIVE
+  INACTIVE
+  SUSPENDED
+  PENDING
+}
+
+enum TenantStatus {
+  ACTIVE
+  INACTIVE
+  SUSPENDED
+}
+
+enum TenantUserRole {
+  OWNER
+  ADMIN
+  MEMBER
+}
+
+enum TenantUserStatus {
+  ACTIVE
+  INACTIVE
+  PENDING
+}
+
+enum WhatsAppStatus {
+  PENDING
+  ACTIVE
+  INACTIVE
+  SUSPENDED
+  ERROR
+}
+
+enum ContactStatus {
+  ACTIVE
+  INACTIVE
+  BLOCKED
+}
+
+enum ConversationStatus {
+  ACTIVE
+  CLOSED
+  ARCHIVED
+}
+
+enum MessageDirection {
+  INBOUND
+  OUTBOUND
+}
+
+enum MessageType {
+  TEXT
+  IMAGE
+  VIDEO
+  AUDIO
+  DOCUMENT
+  LOCATION
+  CONTACT
+  INTERACTIVE
+  TEMPLATE
+}
+
+enum MessageStatus {
+  PENDING
+  SENT
+  DELIVERED
+  READ
+  FAILED
+}
+
+enum WorkflowTrigger {
+  MESSAGE_RECEIVED
+  KEYWORD
+  SCHEDULE
+  WEBHOOK
+  MANUAL
+}
+
+enum WorkflowStatus {
+  DRAFT
+  ACTIVE
+  PAUSED
+  ARCHIVED
+}
+
+enum ExecutionStatus {
+  RUNNING
+  COMPLETED
+  FAILED
+  CANCELLED
+}
+
+enum TemplateCategory {
+  MARKETING
+  UTILITY
+  AUTHENTICATION
+}
+
+enum TemplateStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+enum CampaignType {
+  BROADCAST
+  DRIP_CAMPAIGN
+  AUTOMATION
+}
+
+enum CampaignStatus {
+  DRAFT
+  SCHEDULED
+  RUNNING
+  COMPLETED
+  PAUSED
+  CANCELLED
+}
+
+enum SubscriptionStatus {
+  ACTIVE
+  CANCELED
+  PAST_DUE
+  UNPAID
+}
+
+enum PlanStatus {
+  ACTIVE
+  INACTIVE
+}
+
+enum AnalyticsType {
+  MESSAGES
+  CONVERSATIONS
+  WORKFLOWS
+  CAMPAIGNS
+  REVENUE
+  USERS
+}
