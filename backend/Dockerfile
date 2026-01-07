@@ -1,42 +1,32 @@
-# Use the official Node.js 18 Alpine image
-FROM node:18-alpine AS base
+# ===============================
+# Backend Dockerfile (Stable)
+# ===============================
 
-# Install dependencies only when needed
-FROM base AS deps
+FROM node:18-alpine
+
+# Create app directory
 WORKDIR /app
 
-# Copy package files
+# Install dependencies
 COPY package*.json ./
 RUN npm install && npm cache clean --force
 
-# Production image
-FROM base AS runner
-WORKDIR /app
+# Copy source code
+COPY . .
 
 # Create non-root user
-RUN addgroup --system --gid 1001 nodejs
-RUN adduser --system --uid 1001 nextjs
+RUN addgroup -S nodejs && adduser -S nodeuser -G nodejs
+RUN mkdir -p /app/uploads /app/logs && chown -R nodeuser:nodejs /app
 
-# Copy dependencies
-COPY --from=deps /app/node_modules ./node_modules
-COPY --chown=nextjs:nodejs . .
-
-# Create necessary directories
-RUN mkdir -p /app/uploads /app/logs && chown -R nextjs:nodejs /app
-
-# Set environment variables
+# Environment
 ENV NODE_ENV=production
 ENV PORT=3000
 
-# Switch to non-root user
-USER nextjs
-
-# Health check
-HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
-  
+# Switch user
+USER nodeuser
 
 # Expose port
 EXPOSE 3000
 
-# Start the application
+# Start app
 CMD ["npm", "start"]
